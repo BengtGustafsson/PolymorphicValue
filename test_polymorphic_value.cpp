@@ -28,9 +28,9 @@ using namespace stdx;
 #endif
 
 static_assert(sizeof(polymorphic_value<SmallBase>) == 64 + sizeof(void*));
-static_assert(sizeof(polymorphic_value<SmallBase, 2>) == 2 * sizeof(void*));
+static_assert(sizeof(polymorphic_value < SmallBase, { .size = 2 } > ) == 2 * sizeof(void*));
 static_assert(sizeof(polymorphic_value<BigSub>) == 2 * sizeof(void*));
-static_assert(sizeof(polymorphic_value<BigSub, 512>) == 512 + sizeof(void*));
+static_assert(sizeof(polymorphic_value < BigSub, { .size = 512 } > ) == 512 + sizeof(void*));
 
 struct MoveOnly : public SmallBase {
     MoveOnly() = default;
@@ -109,7 +109,7 @@ int main()
     sv2.reset();
     assert(!sv2);
 
-    auto bv = make_polymorphic_value<BigSub>();
+    auto bv = polymorphic_value<SmallBase>::make<BigSub>();
     bv->identify();
 
     // Move only testing
@@ -117,7 +117,7 @@ int main()
     mv.emplace<MoveOnly>();
     // auto mv2 = mv; As T is not copyable neither is polymorphic_value<T>
 
-    sv.emplace<MoveOnly>();
+    // sv.emplace<MoveOnly>(); --- gives static assert failure
     try {
         sv2 = sv;       // Runtime error as T but not U is copyable.
     }

@@ -2,6 +2,8 @@
 
 Test implementation of a polymorphic_value class for possible introduction into the C++ standard library.
 
+This implementation diverts from P0201 in several ways. See README,md for details.
+
 This software is provided under the MIT license:
 
 Copyright 2022 Bengt Gustafsson
@@ -26,12 +28,10 @@ Further information at: https://opensource.org/licenses/MIT.
 
 #pragma once
 
-#include <memory>
-#include <type_traits>
-#include <stdexcept>
-#include <utility>
-#include <optional>
-
+#include <memory>           // unique_ptr
+#include <type_traits>      // is_copy_constructible, is_move_constructible
+#include <utility>          // construct_at, destroy_at
+#include <optional> 
 
 #if IS_STANDARDIZED
 
@@ -48,21 +48,38 @@ using namespace std;
 #endif
 
 
-template<typename T, size_t SZ = 64> class polymorphic_value {
+/// Options struct for polymorphic_value. Using an options struct as a template parameter seems to be the most ergonomic
+/// way to set options in C++20. A system of named template parameters is the only way to improve on this as all other systems such
+/// as for instance polymorphic_value<T, auto...> requires each option value to be std:: prefixed.
+struct polymorphic_value_options {
+    std::size_t size = 64;
+    std::size_t alignment = 0;
+    bool heap = true;
+    bool copy = true;
+    bool move = true;
+};
+
+template<typename T, polymorphic_value_options Options = polymorphic_value_options{}> class polymorphic_value {
+    // Copies of the options, adjusted for properties of T
+    static const size_t sbo_size = Options.heap ? (Options.size >= sizeof(T) ? Options.size : 0) : max(Options.size, sizeof(T));
+    static const size_t alignment = std::max(alignof(T), Options.alignment);
+    static const bool allow_heap_allocation = Options.heap;
+    static const bool copyable = Options.copy && is_copy_constructible_v<T>;
+    static const bool movable = Options.move && is_move_constructible_v<T>;
+
 public:
-    const static size_t sbo_size = SZ >= sizeof(T) ? SZ : 1;
     polymorphic_value() {}
     polymorphic_value(nullopt_t) {}
-    polymorphic_value(const polymorphic_value& src) requires is_copy_constructible_v<T> {
+    polymorphic_value(const polymorphic_value& src) requires copyable {
         src.m_handler.imbue_handler(m_handler);
         src.m_handler.copy(m_data, src.m_data);
     }
-    polymorphic_value(polymorphic_value&& src) requires is_move_constructible_v<T> {
+    polymorphic_value(polymorphic_value&& src) requires movable {
         src.m_handler.imbue_handler(m_handler);
         src.m_handler.move(m_data, src.m_data);
         src.reset();
     }
-    template<typename U, typename... Args> polymorphic_value(in_place_type_t<U>, Args&&... args)  requires is_base_of_v<T, U> {
+    template<typename U, typename... Args> polymorphic_value(in_place_type_t<U>, Args&&... args) requires is_base_of_v<T, U> {
         emplace<U>(forward<Args>(args)...);
     }
 
@@ -70,10 +87,13 @@ public:
         m_handler.destroy(m_data);
     }
 
-    // TODO: To handle the odd case that a T is copy-assignable but not copy-constructible or vice versa
-    // handler would actually need to have both copy_assign and copy_contruct. Same for move. 
-    // Note that this can only be done if the embedded U of both me and src are the same, otherwise this destroy/construct sequence must be done anyway.
-    polymorphic_value& operator=(const polymorphic_value& src) requires is_copy_constructible_v<T> {
+    // static make function which could be somewhat more ergonomic than the in_place_type constructor, especially after creating a
+    // type alias for a certain pointer type.
+    template<typename U, typename... Args> static polymorphic_value make(Args&&... args) requires is_base_of_v<T, U> {
+        return polymorphic_value(in_place_type<U>, forward<Args>(args)...);
+    }
+
+    polymorphic_value& operator=(const polymorphic_value& src) requires copyable {
         if (this == &src)
             return *this;
 
@@ -83,7 +103,7 @@ public:
         return *this;
     };
 
-    polymorphic_value& operator=(polymorphic_value&& src) requires is_move_constructible_v<T> {
+    polymorphic_value& operator=(polymorphic_value&& src) requires movable {
         if (this == &src)
             return *this;
 
@@ -95,7 +115,12 @@ public:
     };
 
     // Create object of subclass U of T, or by default a T.
-    template<typename U = T, typename... Args> void emplace(Args&&... args) {
+    template<typename U = T, typename... Args> void emplace(Args&&... args) requires is_base_of_v<T, U> {
+        static_assert(!copyable || is_copy_constructible_v<U>, "To use a non-copyable subclass the copy option must be set to false");
+        static_assert(!movable || is_move_constructible_v<U>, "To use a non-movable subclass the copy option must be set to false");
+        static_assert(allow_heap_allocation || sizeof(U) <= sbo_size, "The class does not fit in the polymorphic_value");
+        static_assert(alignof(U) <= alignment, "The class has a higher alignment requirement than specified");
+
         m_handler.destroy(m_data);
         if constexpr (sizeof(U) <= sbo_size) {
             new(&m_handler) small_handler<U>;
@@ -112,17 +137,9 @@ public:
 
     operator bool() const { return get() != nullptr; }
 
-    // Access stored object. This enabled the pattern dynamic_cast<U*>(v.get()) to check and access the data.
-    // Without it
-    //    v.has_value<U>() ? static_cast<U*>(&*v) : nullptr
-    // would have to be used which seems too ugly. The more classical:
-    //     dynamic_cast<U*>(&*v);
-    // does not work without UB as operator* would return "struct at null" but maybe that's not a big deal.
-    //
-    // I would rather add a get() to optional, except that it is less useful there as there is only one null condition so maybe not.
-    //
+    // Access the stored object. This is the unique_ptr API to allow for drop in replacement.
     T* get() { return m_handler.get(m_data); }
-    const T* get() const { return m_handler.get(m_data); }
+    const T* get() const { return const_cast<polymorphic_value*>(this)->get(); }
 
     T& operator*() { return *get(); }
     const T& operator*() const { return *get(); }
@@ -212,7 +229,7 @@ private:
         data() : m_ptr(nullptr) {}
         ~data() {}
 
-        byte m_bytes[sbo_size];
+        byte m_bytes[max(size_t(1), sbo_size)] alignas(alignment);      // 0 sized arrays not allowed.
         unique_ptr<T> m_ptr;
     };
 
@@ -228,6 +245,7 @@ private:
         virtual void destroy(data& d) const {}
     };
     
+    // Handler for Us that fit the SBO size
     template<typename U> struct small_handler final : public handler_base {
         void imbue_handler(handler_base& dest) const override { new(&dest) small_handler<U>; }
 
@@ -237,15 +255,11 @@ private:
         void copy(data& dest, const data& src) const override {
             if constexpr (is_copy_constructible_v<U>)
                 construct_at<U>(reinterpret_cast<U*>(dest.m_bytes), *reinterpret_cast<const U*>(src.m_bytes));
-            else
-                throw runtime_error("Tried to copy an object of move only subclass in a polymorphic_value<T> where T is copyable");
         }
         
         void move(data& dest, data& src) const override {
             if constexpr (is_move_constructible_v<U>)
                 construct_at<U>(reinterpret_cast<U*>(dest.m_bytes), std::move(*reinterpret_cast<U*>(src.m_bytes)));
-            else
-                throw runtime_error("Tried to move an object of immovable subclass in a polymorphic_value<T> where T is movable");
         }
 
         void destroy(data& d) const override { destroy_at(reinterpret_cast<U*>(d.m_bytes)); }
@@ -260,31 +274,17 @@ private:
         void copy(data& dest, const data& src) const override { 
             if constexpr (is_copy_constructible_v<U>)
                 construct_at(&dest.m_ptr, make_unique<U>(static_cast<const U&>(*src.m_ptr)));
-            else
-                throw runtime_error("Tried to copy an object of move only subclass in a polymorphic_value<T> where T is copyable");
         }
         void move(data& dest, data& src) const override {
             if constexpr (is_move_constructible_v<U>)
                 construct_at(&dest.m_ptr, std::move(src.m_ptr));
-            else
-                throw runtime_error("Tried to move an object of immovable subclass in a polymorphic_value<T> where T is movable");
         }
 
-        void destroy(data& d) const override { d.m_ptr = nullptr; }
+        void destroy(data& d) const override { destroy_at(&d.m_ptr); }
     };
 
-    handler_base m_handler;
     data m_data;
+    handler_base m_handler;     // Should be after m_data to avoid a hole if data has a larger alignment than a pointer.
 };
-
-template<typename T, typename U = T, typename... Args> polymorphic_value<T> make_polymorphic_value(Args&&... args)
-{
-    return polymorphic_value<T>(in_place_type<U>, forward<Args>(args)...);
-}
-
-template<typename T, size_t SZ, typename U = T, typename... Args> polymorphic_value<T, SZ> make_polymorphic_value(Args&&... args)
-{
-    return polymorphic_value<T, SZ>(in_place_type<U>, forward<Args>(args)...);
-}
 
 }       // Namespace std or stdx
