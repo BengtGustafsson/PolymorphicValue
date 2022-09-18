@@ -5,6 +5,8 @@ Variation of std::polymorphic_value (P0201) with small buffer optimization and o
 In the current state the class is located in a separate namespace stdx unless the preprocessor variable IS_STANDARDIZED is set to 1,
 in which case it is located in the std namespace.
 
+Warning: At this time the code base is not thoroughly tested, and noexcept forwarding is not implemented.
+
 ## Differences from P0201
 
 In contrast with the implementation at [https://github.com/jbcoe/polymorphic_value] as described by 
@@ -33,14 +35,14 @@ monadic optional API is directly implemented (with some twists regarding U subcl
 
 ## Description
 
-polymorphic_value is a by value container of one object of any subclass of T with SBO for objects of small enough size. The API is
-close to unique_ptr. The semantics is also close but with the difference that references to the data are not preserved when the
+polymorphic_value is a by value container of one object of any subclass U of T with SBO for objects of small enough size. The API is
+close to unique_ptr's. The semantics is also close but with the difference that references to the data are not preserved when the
 object is moved. Another important difference is that the object has copy semantics if T has, and keeps track which subclass U is
 controlled and thus must be copied.
 
 ### Constructing polymorphic_values with subtype objects in them
 
-There are three ways to set an instance of a subtype U in a `polymorphic_value<T>` that serve different purposes. When creating a
+There are three ways to put an instance of a subtype U into a `polymorphic_value<T>` that serve different purposes. When creating a
 polymorphic_value as a stack variable or return value the static method `make<U>(args...)` is usually the most ergonomic. To contruct
 a member in a member initializer list the constructor which takes a `std::in_place_type<U>` as its first parameter is the best choice.
 When changing the value in a pre-existing polymorphic_type object the `emplace<U>` method is usually preferrable. When used
@@ -62,17 +64,20 @@ using MyPoly = std::polymorphic_value<MyType>;
 
 // Example class containing a MyPoly value.
 class User {
+public:
     User() : m_object(std::in_place_type<MySubType>) {}     // Use in_place_type in member initializer list
     User(MyPoly p) : m_object(std::move(p)) {}
 
     void back_to_basics() {
         m_object.emplace<MyType>();     // Use emplace to change type of m_object to MyType.
+    }
 
+private:
     MyPoly m_object;
 };
 
 
-// Use make when returning a polymorphic_value
+// Use make() when returning a polymorphic_value
 MyPoly createPoly(bool useSub)
 {
     if (useSub)
@@ -105,9 +110,9 @@ which is never used.
 
 ### Preventing heap allocation
 
-In some scenarios, especially in embedded systems, heap allocations may be precluded. To be able to check against heap allocations
-already at compile time there is a special option that can be set to false to prevent allocations. In this case the size of each U
-being used is checked at compile time towards the set SBO size, thereby simplifying selecting the suitable SBO size.
+In some scenarios, especially in embedded systems, heap allocations may be precluded. To be able to check against potential heap
+allocations already at compile time there is a special option that can be set to false to prevent allocations. In this case the size
+of each U being used is checked at compile time towards the set SBO size, thereby simplifying selecting a suitable SBO size.
 
 If heap allocations are prevented by this option the SBO size is set to be at least as large as T. However, if subclasses add
 members the SBO size must be adjusted manually.
@@ -119,7 +124,7 @@ fairly good syntax. The type of the second template parameter is std::polymorphi
 out but can just use a initializer clause as the value:
 
 ``` cpp
-using MyPoly = std::polymorphic_value<MyType, {.size = 32, .heap = false, .copy = false }>;
+using MyPoly = std::polymorphic_value<MyType, { .size = 32, .heap = false, .copy = false }>;
 ```
 
 ## Implementation details
@@ -131,8 +136,8 @@ constructed in the member called m_handler which is of the baseclass type. The b
 polymorphic_value object.
 
 The embedded handler object is responsible for copying itself as well as the data depending on if SBO is in effect or not. To make
-sure the destination of a copy/move understands what data type it is holding the source handler has a virtual method `imbue` to in
-place construct a copy of itself in the destination's m_handler member.
+sure the destination of a copy/move understands what data type it is holding the source handler has a virtual method `imbue_handler`
+to in place construct a copy of itself in the destination's m_handler member.
 
 ## Notes and limitations
 
@@ -152,8 +157,8 @@ virtual call and an if when accessing the underlying data, which seems too costl
 unfortunately requires clauses are not allowed on virtual methods (when could that ever be useful?) so it is complicated to get just
 to save a few bytes of unused vtable entries. Fixing this is a QoI issue which can be done by real implementations.
 
-- If assigning between equally typed contained objects the copy/move assignment could be called instead of copy/move construct +
-destroy. However, for types that don't do the rule of 5 right this would require additional Options which is too boring, and there
-are rather few instances where there is any real gain to be had. It is also hard to detect if the contained object of source and
-destination are the same type, this would at least require an extra virtual method on the handler and a polymorphic typeid check
-which requires that RTTI is enabled, which is not otherwise required for basic operation.
+- If assigning between equally typed contained objects the copy/move assignment operator could be called instead of copy/move
+construct + destroy. However, for types that don't do the rule of 5 right this would require additional Options which is too boring,
+and there are rather few instances where there is any real gain to be had. It is also hard to detect if the contained object of
+source and destination are the same type, this would at least require an extra virtual method on the handler and a polymorphic
+typeid check which requires that RTTI is enabled, which is not otherwise required for basic operation.
