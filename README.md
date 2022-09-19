@@ -139,19 +139,41 @@ The embedded handler object is responsible for copying itself as well as the dat
 sure the destination of a copy/move understands what data type it is holding the source handler has a virtual method `imbue_handler`
 to in place construct a copy of itself in the destination's m_handler member.
 
+### Performance indications
+
+Access of the stored data has a cost of one virtual function call. This call handles both selection between SBO and heap storage and
+subclass to base class this pointer conversion.
+
+Construction of a U value has the additional cost of in place constructing the correct handler subclass which after optimization
+boils down to writing a constant pointer value in the vtable pointer of m_handler.
+
+Moving or copying a value has the overhead of a virtual function call to the move/copy methods of the source's handler.
+
+Moving a polymorphic_value actually moves the value if the SBO buffer is used, whereas moving a unique_ptr only moves the pointer.
+To avoid moving values set the SBO size small. Usually the cost of performing an allocation is much higher than the cost of moving a
+value if move is properly implemented, but this depends on the actual class involved.
+
 ## Notes and limitations
 
-- It is not possible to assign or construct from a `polymorphic_value<U>` to a `polymorphic_value<T>` even if U is a subclass of
-T. This limitation is due to the complexities of handling the this pointer offsets in case the `polymorphic_value<U>` actually
-contains an object of a further subclass Z: While the handler imbued by `polymorphic_value<U>` in `polymorphic_value<T>` handles the
-conversion from Z to U correctly the further conversion from U to T can't be handled without extra unbounded data. Some limited
-support such as "only without multiple inheritance" or "only without virtual inheritance" could be added but it would have size and
-speed cost.
+- It is not possible to assign or construct from a `polymorphic_value<U>` to a `polymorphic_value<T>` even if U is a subclass of T.
+This limitation is due to the complexities of handling the this pointer offsets in case the `polymorphic_value<U>` actually contains
+an object of a further subclass Z: While the handler imbued by `polymorphic_value<U>` in `polymorphic_value<T>` handles the
+conversion from Z to U correctly the further conversion from U to T can't be handled without extra data of potentially unbounded
+size. Some limited support such as "only without multiple inheritance" or "only without virtual inheritance" could be added but it
+would have size and speed cost.
 
-- It is not possible to assign between polymorphic_values with different SZ values as this would potentially require
-copying the data from an external to internal storage or vice versa. As the handler of the source imbues itself on the destination
-this fails if the destination has a different SZ. Workarounds were tried but were not successful without incurring at least an extra
-virtual call and an if when accessing the underlying data, which seems too costly for such a rarely usable feature.
+- It is not possible to assign between polymorphic_values with different SBO size values as this would potentially require copying
+the data from an external to internal storage or vice versa. As the handler of the source constructs a copy of itself in the
+destination this fails if the source and destination has a different SBO size and the actual size of U is between these two values.
+Workarounds were tried but were not successful without incurring at least an extra virtual call and an if when accessing the
+underlying data, which seems too costly for such a rarely useful feature. [ At time of writing it seems that it should be enough if
+the destination passed its SBO size to the handler's copy and move methods ].
+
+- Whether differeences in other options should still allow copying/moving between polymorphic_values (and in which directions)
+remains to be investigated. It seems that at least some differences should be allowed, but it is also hard to see how to enforce
+this, but maybe a requires clause could check the two polymorphic_value_ooptions objects of source and destination type to figure
+this out. From a specification standpoint it is of course easiest to not allow any differences and it seems that the probability
+that an application would have polymorphic_values of the same T but different options is quite low.
 
 - The virtual methods copy and move of the nested handler class could be made optional dependig on the move/copy semantics but
 unfortunately requires clauses are not allowed on virtual methods (when could that ever be useful?) so it is complicated to get just
@@ -161,4 +183,4 @@ to save a few bytes of unused vtable entries. Fixing this is a QoI issue which c
 construct + destroy. However, for types that don't do the rule of 5 right this would require additional Options which is too boring,
 and there are rather few instances where there is any real gain to be had. It is also hard to detect if the contained object of
 source and destination are the same type, this would at least require an extra virtual method on the handler and a polymorphic
-typeid check which requires that RTTI is enabled, which is not otherwise required for basic operation.
+typeid check which requires that RTTI is enabled, which is not otherwise required.

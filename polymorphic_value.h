@@ -71,12 +71,10 @@ public:
     polymorphic_value() {}
     polymorphic_value(nullopt_t) {}
     polymorphic_value(const polymorphic_value& src) requires copyable {
-        src.m_handler.imbue_handler(m_handler);
-        src.m_handler.copy(m_data, src.m_data);
+        src.m_handler.copy(*this, src.m_data);
     }
     polymorphic_value(polymorphic_value&& src) requires movable {
-        src.m_handler.imbue_handler(m_handler);
-        src.m_handler.move(m_data, src.m_data);
+        src.m_handler.move(*this, src.m_data);
         src.reset();
     }
     template<typename U, typename... Args> polymorphic_value(in_place_type_t<U>, Args&&... args) requires is_base_of_v<T, U> {
@@ -98,8 +96,7 @@ public:
             return *this;
 
         m_handler.destroy(m_data);
-        src.m_handler.imbue_handler(m_handler);
-        src.m_handler.copy(m_data, src.m_data);
+        src.m_handler.copy(*this, src.m_data);
         return *this;
     };
 
@@ -108,8 +105,7 @@ public:
             return *this;
 
         m_handler.destroy(m_data);
-        src.m_handler.imbue_handler(m_handler);
-        src.m_handler.move(m_data, src.m_data);
+        src.m_handler.move(*this, src.m_data);
         src.reset();
         return *this;
     };
@@ -240,44 +236,49 @@ private:
         virtual T* get(data& d) const { return nullptr; }
         virtual const T* get(const data& d) const { return nullptr; }
 
-        virtual void copy(data& dest, const data& src) const {}
-        virtual void move(data& dest, data& src) const {}
+        virtual void copy(polymorphic_value& dest, const data& src) const {}
+        virtual void move(polymorphic_value& dest, data& src) const {}
         virtual void destroy(data& d) const {}
     };
     
     // Handler for Us that fit the SBO size
     template<typename U> struct small_handler final : public handler_base {
-        void imbue_handler(handler_base& dest) const override { new(&dest) small_handler<U>; }
+        void imbue_handler(handler_base& dest) const override { }
 
         T* get(data& d) const override { return static_cast<T*>(reinterpret_cast<U*>(d.m_bytes)); }
         const T* get(const data& d) const override { return static_cast<const T*>(reinterpret_cast<const U*>(d.m_bytes)); }
 
-        void copy(data& dest, const data& src) const override {
-            if constexpr (is_copy_constructible_v<U>)
-                construct_at<U>(reinterpret_cast<U*>(dest.m_bytes), *reinterpret_cast<const U*>(src.m_bytes));
+        void copy(polymorphic_value& dest, const data& src) const override {
+            new(&dest.m_handler) small_handler<U>; 
+            if constexpr (is_copy_constructible_v<U>) // Always true thanks to requires clauses on constructors/assignment operators.
+                construct_at<U>(reinterpret_cast<U*>(dest.m_data.m_bytes), *reinterpret_cast<const U*>(src.m_bytes));
         }
         
-        void move(data& dest, data& src) const override {
+        void move(polymorphic_value& dest, data& src) const override {
+            new(&dest.m_handler) small_handler<U>;
             if constexpr (is_move_constructible_v<U>)
-                construct_at<U>(reinterpret_cast<U*>(dest.m_bytes), std::move(*reinterpret_cast<U*>(src.m_bytes)));
+                construct_at<U>(reinterpret_cast<U*>(dest.m_data.m_bytes), std::move(*reinterpret_cast<U*>(src.m_bytes)));
         }
 
         void destroy(data& d) const override { destroy_at(reinterpret_cast<U*>(d.m_bytes)); }
     };
     
+    // Handler for Us that don't fit the SBO size
     template<typename U> struct big_handler final : public handler_base {
         void imbue_handler(handler_base& dest) const override { new(&dest) big_handler<U>; }
 
         T* get(data& d) const override { return d.m_ptr.get(); }
         const T* get(const data& d) const override { return d.m_ptr.get(); }
 
-        void copy(data& dest, const data& src) const override { 
+        void copy(polymorphic_value& dest, const data& src) const override { 
+            new(&dest.m_handler) big_handler<U>;
             if constexpr (is_copy_constructible_v<U>)
-                construct_at(&dest.m_ptr, make_unique<U>(static_cast<const U&>(*src.m_ptr)));
+                construct_at(&dest.m_data.m_ptr, make_unique<U>(static_cast<const U&>(*src.m_ptr)));
         }
-        void move(data& dest, data& src) const override {
+        void move(polymorphic_value& dest, data& src) const override {
+            new(&dest.m_handler) big_handler<U>;
             if constexpr (is_move_constructible_v<U>)
-                construct_at(&dest.m_ptr, std::move(src.m_ptr));
+                construct_at(&dest.m_data.m_ptr, std::move(src.m_ptr));
         }
 
         void destroy(data& d) const override { destroy_at(&d.m_ptr); }
