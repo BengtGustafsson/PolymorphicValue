@@ -249,15 +249,17 @@ private:
         const T* get(const data& d) const override { return static_cast<const T*>(reinterpret_cast<const U*>(d.m_bytes)); }
 
         void copy(polymorphic_value& dest, const data& src) const override {
-            new(&dest.m_handler) small_handler<U>; 
+            new(&dest.m_handler) handler_base;
             if constexpr (is_copy_constructible_v<U>) // Always true thanks to requires clauses on constructors/assignment operators.
                 construct_at<U>(reinterpret_cast<U*>(dest.m_data.m_bytes), *reinterpret_cast<const U*>(src.m_bytes));
+            new(&dest.m_handler) small_handler<U>; 
         }
         
         void move(polymorphic_value& dest, data& src) const override {
-            new(&dest.m_handler) small_handler<U>;
+            new(&dest.m_handler) handler_base;
             if constexpr (is_move_constructible_v<U>)
                 construct_at<U>(reinterpret_cast<U*>(dest.m_data.m_bytes), std::move(*reinterpret_cast<U*>(src.m_bytes)));
+            new(&dest.m_handler) small_handler<U>;
         }
 
         void destroy(data& d) const override { destroy_at(reinterpret_cast<U*>(d.m_bytes)); }
@@ -271,14 +273,16 @@ private:
         const T* get(const data& d) const override { return d.m_ptr.get(); }
 
         void copy(polymorphic_value& dest, const data& src) const override { 
-            new(&dest.m_handler) big_handler<U>;
+            new(&dest.m_handler) handler_base;
             if constexpr (is_copy_constructible_v<U>)
                 construct_at(&dest.m_data.m_ptr, make_unique<U>(static_cast<const U&>(*src.m_ptr)));
+            new(&dest.m_handler) big_handler<U>;
         }
         void move(polymorphic_value& dest, data& src) const override {
-            new(&dest.m_handler) big_handler<U>;
+            new(&dest.m_handler) handler_base;
             if constexpr (is_move_constructible_v<U>)
                 construct_at(&dest.m_data.m_ptr, std::move(src.m_ptr));
+            new(&dest.m_handler) big_handler<U>;
         }
 
         void destroy(data& d) const override { destroy_at(&d.m_ptr); }
