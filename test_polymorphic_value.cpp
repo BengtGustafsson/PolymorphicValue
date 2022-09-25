@@ -132,4 +132,8 @@ int main()
         std::cout << ex.what() << std::endl;
     }
 
+    // Test polymorphic_value_for
+    polymorphic_value_for<SmallBase, SmallSub, BigSub, MoveOnly> sv4(std::in_place_type<BigSub>);
+
+    // auto sv5 = sv4; No copy with MoveOnly in the list.
 }

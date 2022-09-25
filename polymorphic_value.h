@@ -31,7 +31,9 @@ Further information at: https://opensource.org/licenses/MIT.
 #include <memory>           // unique_ptr
 #include <type_traits>      // is_copy_constructible, is_move_constructible
 #include <utility>          // construct_at, destroy_at
-#include <optional> 
+#include <optional>         // nullopt
+#include <algorithm>        // all_of, max_element
+#include <initializer_list>
 
 #if IS_STANDARDIZED
 
@@ -52,8 +54,8 @@ using namespace std;
 /// way to set options in C++20. A system of named template parameters is the only way to improve on this as all other systems such
 /// as for instance polymorphic_value<T, auto...> requires each option value to be std:: prefixed.
 struct polymorphic_value_options {
-    std::size_t size = 64;
-    std::size_t alignment = 0;
+    size_t size = 64;
+    size_t alignment = 0;
     bool heap = true;
     bool copy = true;
     bool move = true;
@@ -62,7 +64,7 @@ struct polymorphic_value_options {
 template<typename T, polymorphic_value_options Options = polymorphic_value_options{}> class polymorphic_value {
     // Copies of the options, adjusted for properties of T
     static const size_t sbo_size = Options.heap ? (Options.size >= sizeof(T) ? Options.size : 0) : max(Options.size, sizeof(T));
-    static const size_t alignment = std::max(alignof(T), Options.alignment);
+    static const size_t alignment = max(alignof(T), Options.alignment);
     static const bool allow_heap_allocation = Options.heap;
     static const bool copyable = Options.copy && is_copy_constructible_v<T>;
     static const bool movable = Options.move && is_move_constructible_v<T>;
@@ -225,7 +227,7 @@ private:
         data() : m_ptr(nullptr) {}
         ~data() {}
 
-        byte m_bytes[max(size_t(1), sbo_size)] alignas(alignment);      // 0 sized arrays not allowed.
+        alignas(alignment) byte m_bytes[max(size_t(1), sbo_size)];      // 0 sized arrays not allowed.
         unique_ptr<T> m_ptr;
     };
 
@@ -291,5 +293,37 @@ private:
     data m_data;
     handler_base m_handler;     // Should be after m_data to avoid a hole if data has a larger alignment than a pointer.
 };
+
+#if 0 // I thought this should work but it gives me std::ranges_dangling from max_element et al.
+// Create polymorphic_value_options suitable for a closed set of SubClasses
+template<typename... SubClasses> constexpr polymorphic_value_options polymorphic_value_options_for = {
+    .size = size_t(*ranges::max_element(initializer_list<size_t>{ sizeof(SubClasses)... })),
+    .alignment = *ranges::max_element(initializer_list<size_t>{ alignof(SubClasses)... }),
+    .heap = false,
+    .copy = ranges::all_of(initializer_list<size_t>{std::is_copy_constructible_v<SubClasses>...}, [](bool x) { return x; }),
+    .move = ranges::all_of(initializer_list<size_t>{std::is_move_constructible_v<SubClasses>...}, [](bool x) { return x; })
+};
+#else
+
+template<typename S, typename... Ss> constexpr polymorphic_value_options polymorphic_value_options_for = {
+    .size = max(sizeof(S), polymorphic_value_options_for<Ss...>.size),
+    .alignment = max(alignof(S), polymorphic_value_options_for<Ss...>.alignment),
+    .heap = false,
+    .copy = is_copy_constructible_v<S> && polymorphic_value_options_for<Ss...>.copy,
+    .move = is_move_constructible_v<S> && polymorphic_value_options_for<Ss...>.move
+};
+template<typename S> constexpr polymorphic_value_options polymorphic_value_options_for<S> = {
+    .size = sizeof(S),
+    .alignment = alignof(S),
+    .heap = false,
+    .copy = is_copy_constructible_v<S>,
+    .move = is_move_constructible_v<S>
+};
+
+#endif
+
+// Type alias suitable for a polymorphic_value able to hold all of the subclasses.
+template<typename T, typename... SubClasses> using polymorphic_value_for = polymorphic_value<T, polymorphic_value_options_for<SubClasses...>>; 
+
 
 }       // Namespace std or stdx
