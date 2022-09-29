@@ -10,7 +10,7 @@ Warning: At this time the code base is not thoroughly tested, and noexcept forwa
 ## Differences from P0201
 
 In contrast with the implementation at [https://github.com/jbcoe/polymorphic_value] as described by 
-[https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0201r1.pdf] this implementation:
+[https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p0201r5.html] this implementation:
 
 - Has small buffer optimization (SBO) support to reduce heap allocations
 
