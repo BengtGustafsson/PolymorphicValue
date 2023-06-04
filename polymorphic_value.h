@@ -73,7 +73,7 @@ public:
     polymorphic_value() {}
     polymorphic_value(nullopt_t) {}
     polymorphic_value(const polymorphic_value& src) requires copyable {
-        src.m_handler.copy(*this, src.m_data);
+        src.getHandlerBase().copy(*this, src.m_data);
     }
     polymorphic_value(polymorphic_value&& src) requires movable {
         src.m_handler.move(*this, src.m_data);
@@ -136,7 +136,7 @@ public:
     operator bool() const { return get() != nullptr; }
 
     // Access the stored object. This is the unique_ptr API to allow for drop in replacement.
-    T* get() { return m_handler.get(m_data); }
+    T *get() { return getHandlerBase().get(m_data); }
     const T* get() const { return const_cast<polymorphic_value*>(this)->get(); }
 
     T& operator*() { return *get(); }
@@ -289,6 +289,8 @@ private:
 
         void destroy(data& d) const override { destroy_at(&d.m_ptr); }
     };
+
+    handler_base const &getHandlerBase() const noexcept { return m_handler; }
 
     data m_data;
     handler_base m_handler;     // Should be after m_data to avoid a hole if data has a larger alignment than a pointer.
