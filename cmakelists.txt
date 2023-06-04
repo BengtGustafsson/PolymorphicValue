@@ -4,3 +4,10 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_executable(test_polymorphic_value polymorphic_value.h test_polymorphic_value.cpp)
 
+include(CTest)
+
+add_test(
+    NAME test_polymorphic_value
+    COMMAND test_polymorphic_value
+    WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}
+)
