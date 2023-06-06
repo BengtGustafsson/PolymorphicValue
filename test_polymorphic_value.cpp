@@ -28,9 +28,9 @@ using namespace stdx;
 #endif
 
 static_assert(sizeof(polymorphic_value<SmallBase>) == 64 + sizeof(void*));
-static_assert(sizeof(polymorphic_value < SmallBase, { .size = 2 } > ) == 2 * sizeof(void*));
+static_assert(sizeof(polymorphic_value < SmallBase, polymorphic_value_options{ .size = 2 } > ) == 2 * sizeof(void*));
 static_assert(sizeof(polymorphic_value<BigSub>) == 2 * sizeof(void*));
-static_assert(sizeof(polymorphic_value < BigSub, { .size = 512 } > ) == 512 + sizeof(void*));
+static_assert(sizeof(polymorphic_value < BigSub, polymorphic_value_options{ .size = 512 } > ) == 512 + sizeof(void*));
 
 struct MoveOnly : public SmallBase {
     MoveOnly() = default;
