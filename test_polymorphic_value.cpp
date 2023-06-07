@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <new>
 
 struct SmallBase {
     virtual ~SmallBase() {}
