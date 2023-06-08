@@ -73,10 +73,10 @@ public:
     polymorphic_value() {}
     polymorphic_value(nullopt_t) {}
     polymorphic_value(const polymorphic_value& src) requires copyable {
-        src.getHandler().copy(*this, src.m_data);
+        std::launder(&src.m_handler)->copy(*this, src.m_data);
     }
     polymorphic_value(polymorphic_value&& src) requires movable {
-        src.getHandler().move(*this, src.m_data);
+        std::launder(&src.m_handler)->move(*this, src.m_data);
         src.reset();
     }
     template<typename U, typename... Args> polymorphic_value(in_place_type_t<U>, Args&&... args) requires is_base_of_v<T, U> {
@@ -84,7 +84,7 @@ public:
     }
 
     ~polymorphic_value() {
-        getHandler().destroy(m_data);
+        std::launder(&m_handler)->destroy(m_data);
     }
 
     // static make function which could be somewhat more ergonomic than the in_place_type constructor, especially after creating a
@@ -97,8 +97,8 @@ public:
         if (this == &src)
             return *this;
 
-        getHandler().destroy(m_data);
-        src.getHandler().copy(*this, src.m_data);
+        std::launder(&m_handler)->destroy(m_data);
+        std::launder(&src.m_handler)->copy(*this, src.m_data);
         return *this;
     };
 
@@ -106,8 +106,8 @@ public:
         if (this == &src)
             return *this;
 
-        getHandler().destroy(m_data);
-        src.getHandler().move(*this, src.m_data);
+        std::launder(&m_handler)->destroy(m_data);
+        std::launder(&src.m_handler)->move(*this, src.m_data);
         src.reset();
         return *this;
     };
@@ -119,7 +119,7 @@ public:
         static_assert(allow_heap_allocation || sizeof(U) <= sbo_size, "The class does not fit in the polymorphic_value");
         static_assert(alignof(U) <= alignment, "The class has a higher alignment requirement than specified");
 
-        getHandler().destroy(m_data);
+        std::launder(&m_handler)->destroy(m_data);
         if constexpr (sizeof(U) <= sbo_size) {
             new(&m_handler) small_handler<U>;
             construct_at(reinterpret_cast<U*>(m_data.m_bytes), forward<Args>(args)...);
@@ -131,12 +131,12 @@ public:
     }
 
     // Get rid of a stored object, resetting the handler so that no double delete occurs later and so that operator bool returns false.
-    void reset() { getHandler().destroy(m_data); new(&m_handler) handler_base; }
+    void reset() { std::launder(&m_handler)->destroy(m_data); new(&m_handler) handler_base; }
 
     operator bool() const { return get() != nullptr; }
 
     // Access the stored object. This is the unique_ptr API to allow for drop in replacement.
-    T* get() { return getHandler().get(m_data); }
+    T* get() { return std::launder(&m_handler)->get(m_data); }
     const T* get() const { return const_cast<polymorphic_value*>(this)->get(); }
 
     T& operator*() { return *get(); }
@@ -289,7 +289,6 @@ private:
 
         void destroy(data& d) const override { destroy_at(&d.m_ptr); }
     };
-    const handler_base& getHandler() const { return m_handler; }          // This function is needed to ensure that the placement new of m_handler is not "forgotten".
 
     data m_data;
     handler_base m_handler;     // Should be after m_data to avoid a hole if data has a larger alignment than a pointer.
